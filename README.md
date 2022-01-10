@@ -74,6 +74,16 @@ Check out our [Java, Golang and Python clients](docs/client-libraries.md).
 
 ## Quickstart
 
+### Building the C3 images
+
+To build the `argocli`, `argoexec`, and `workflow-controller` images for C3, run:
+
+```bash
+make c3
+```
+
+### Kubernetes cluster install
+
 ```bash
 kubectl create namespace argo
 kubectl apply -n argo -f https://raw.githubusercontent.com/argoproj/argo-workflows/master/manifests/install.yaml

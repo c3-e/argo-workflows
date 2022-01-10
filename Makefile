@@ -17,8 +17,11 @@ DEV_BRANCH            := $(shell [ $(GIT_BRANCH) = master ] || [ `echo $(GIT_BRA
 GREP_LOGS             := ""
 
 # docker image publishing options
-IMAGE_NAMESPACE       ?= ci.registry.c3iot.io/preview
+IMAGE_NAMESPACE       ?= ci-registry.c3iot.io/preview
 DEV_IMAGE             ?= $(shell [ `uname -s` = Darwin ] && echo true || echo false)
+
+# defines whether to use c3 options
+C3_FLAG               ?= true
 
 # declares which cluster to import to in case it's not the default name
 K3D_CLUSTER_NAME      ?= k3s-default
@@ -27,7 +30,7 @@ K3D_CLUSTER_NAME      ?= k3s-default
 KUBE_NAMESPACE        ?= argo
 MANAGED_NAMESPACE     ?= $(KUBE_NAMESPACE)
 
-VERSION               := latest
+VERSION               := 3.2.6
 DOCKER_PUSH           := false
 
 # VERSION is the version to be used for files in manifests and should always be latest unless we are releasing
@@ -134,6 +137,9 @@ ifndef $(GOPATH)
 	export GOPATH
 endif
 
+.PHONY: c3
+c3: cli controller dist/argoexec images
+
 .PHONY: build
 build: clis images
 
@@ -177,12 +183,18 @@ dist/argo-%.gz: dist/argo-%
 dist/argo-%: server/static/files.go $(CLI_PKGS) go.sum
 	CGO_ENABLED=0 $(GOARGS) go build -v -ldflags '${LDFLAGS} -extldflags -static' -o $@ ./cmd/argo
 
+
 dist/argo: server/static/files.go $(CLI_PKGS) go.sum
+ifeq ($(C3_FLAG),true)
+	# if local, then build fast: use CGO and dynamic-linking
+	GOOS=linux GOARCH=amd64 go build -v -ldflags '${LDFLAGS}' -o $@ ./cmd/argo
+else
 ifeq ($(shell uname -s),Darwin)
 	# if local, then build fast: use CGO and dynamic-linking
 	go build -v -ldflags '${LDFLAGS}' -o $@ ./cmd/argo
 else
 	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS} -extldflags -static' -o $@ ./cmd/argo
+endif
 endif
 
 argocli-image:
@@ -196,11 +208,16 @@ clis: dist/argo-linux-amd64.gz dist/argo-linux-arm64.gz dist/argo-linux-ppc64le.
 controller: dist/workflow-controller
 
 dist/workflow-controller: $(CONTROLLER_PKGS) go.sum
+ifeq ($(C3_FLAG),true)
+	# if local, then build fast: use CGO and dynamic-linking
+	GOOS=linux GOARCH=amd64 go build -v -ldflags '${LDFLAGS}' -o $@ ./cmd/workflow-controller
+else
 ifeq ($(shell uname -s),Darwin)
 	# if local, then build fast: use CGO and dynamic-linking
 	go build -v -ldflags '${LDFLAGS}' -o $@ ./cmd/workflow-controller
 else
 	CGO_ENABLED=0 go build -v -ldflags '${LDFLAGS} -extldflags -static' -o $@ ./cmd/workflow-controller
+endif
 endif
 
 workflow-controller-image:
@@ -217,6 +234,10 @@ endif
 argoexec-image:
 
 %-image:
+ifeq ($(C3_FLAG),true)
+	# skip buildx pre-requisite
+	docker build -t $(IMAGE_NAMESPACE)/$*:$(VERSION) -f Dockerfile.$* .
+else
 	[ ! -e dist/$* ] || mv dist/$* .
 	docker buildx install
 	docker build \
@@ -229,6 +250,7 @@ argoexec-image:
 	docker run --rm -t $(IMAGE_NAMESPACE)/$*:$(VERSION) version
 	if [ $(K3D) = true ]; then k3d image import -c $(K3D_CLUSTER_NAME) $(IMAGE_NAMESPACE)/$*:$(VERSION); fi
 	if [ $(DOCKER_PUSH) = true ] && [ $(IMAGE_NAMESPACE) != argoproj ] ; then docker push $(IMAGE_NAMESPACE)/$*:$(VERSION) ; fi
+endif
 
 scan-images: scan-workflow-controller scan-argoexec scan-argocli
 
